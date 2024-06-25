@@ -169,6 +169,10 @@ func (a *apiConfig) createFeed(w http.ResponseWriter, r *http.Request, u databas
 		Name string `json:"name"`
 		Url  string `json:"url"`
 	}
+	type ResponsBody struct {
+		Feed       database.Feed       `json:"feed"`
+		FeedFollow database.FeedFollow `json:"feed_follow"`
+	}
 	bodyJson := RequestBody{}
 	err := json.NewDecoder(r.Body).Decode(&bodyJson)
 	if err != nil {
@@ -194,7 +198,27 @@ func (a *apiConfig) createFeed(w http.ResponseWriter, r *http.Request, u databas
 		ResponseWithError(w, http.StatusInternalServerError, "couldn't create the feed for this user")
 		return
 	}
-	ResponseWithJson(w, http.StatusCreated, f)
+	followFeedId, err := uuid.NewV7()
+	if err != nil {
+		ResponseWithError(w, http.StatusInternalServerError, "uuid couldn't be created")
+		return
+	}
+	followFeed := database.CreateFeedFollowParams{
+		ID:        followFeedId,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    u.ID,
+		FeedID:    feed.ID,
+	}
+	ff, err := a.DB.CreateFeedFollow(r.Context(), followFeed)
+	if err != nil {
+		ResponseWithError(w, http.StatusInternalServerError, "couldn't create the feed for this user")
+		return
+	}
+	ResponseWithJson(w, http.StatusCreated, ResponsBody{
+		Feed:       f,
+		FeedFollow: ff,
+	})
 }
 
 func (a *apiConfig) middlewareAuth(handler authedHandler) http.HandlerFunc {
