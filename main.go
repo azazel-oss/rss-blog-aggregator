@@ -278,13 +278,14 @@ func (a apiConfig) WorkerToProcessFeeds(ctx context.Context, interval time.Durat
 				wg.Add(1)
 				go func(f database.Feed) {
 					defer wg.Done()
-					processFeed(f)
+					a.processFeed(ctx, f)
 				}(feed)
 			}
 		}
 	}
 }
 
-func processFeed(feed database.Feed) {
+func (a apiConfig) processFeed(ctx context.Context, feed database.Feed) {
+	a.DB.MarkFeedFetched(ctx, feed.ID)
 	log.Printf(feed.Name)
 }
