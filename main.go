@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"encoding/xml"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -238,4 +240,17 @@ func (a *apiConfig) middlewareAuth(handler authedHandler) http.HandlerFunc {
 
 		handler(w, r, u)
 	})
+}
+
+func ScrapeDataFromLiveFeedByUrl(url string) Rss {
+	res, err := http.Get(url)
+	if err != nil {
+		return Rss{}
+	}
+	rss := Rss{}
+	xml.NewDecoder(res.Body).Decode(&rss)
+	for _, value := range rss.Channel.Item {
+		fmt.Println(value.Title)
+	}
+	return rss
 }
