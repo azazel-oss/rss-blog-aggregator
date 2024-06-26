@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"rssblogaggregator/internal/database"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -36,7 +38,9 @@ func main() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go apiCfg.WorkerToProcessFeeds(ctx, 60*time.Second, 10)
 	serveMux := http.NewServeMux()
 	server := http.Server{
 		Handler: serveMux,
@@ -253,4 +257,34 @@ func ScrapeDataFromLiveFeedByUrl(url string) Rss {
 		fmt.Println(value.Title)
 	}
 	return rss
+}
+
+func (a apiConfig) WorkerToProcessFeeds(ctx context.Context, interval time.Duration, n int32) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			log.Println("Feed fetcher worker stopped")
+			return
+		case <-ticker.C:
+			feeds, err := a.DB.GetNextFeedsToFetch(ctx, n)
+			if err != nil {
+				log.Printf("Error fetching feeds: %v", err)
+				continue
+			}
+			var wg sync.WaitGroup
+			for _, feed := range feeds {
+				wg.Add(1)
+				go func(f database.Feed) {
+					defer wg.Done()
+					processFeed(f)
+				}(feed)
+			}
+		}
+	}
+}
+
+func processFeed(feed database.Feed) {
+	log.Printf(feed.Name)
 }
