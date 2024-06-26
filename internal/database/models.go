@@ -29,6 +29,17 @@ type FeedFollow struct {
 	FeedID    uuid.UUID `json:"feed_id"`
 }
 
+type Post struct {
+	ID          uuid.UUID    `json:"id"`
+	CreatedAt   time.Time    `json:"created_at"`
+	UpdatedAt   time.Time    `json:"updated_at"`
+	Title       string       `json:"title"`
+	Url         string       `json:"url"`
+	Description string       `json:"description"`
+	FeedID      uuid.UUID    `json:"feed_id"`
+	PublishedAt sql.NullTime `json:"published_at"`
+}
+
 type User struct {
 	ID        uuid.UUID `json:"id"`
 	CreatedAt time.Time `json:"created_at"`
