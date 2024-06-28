@@ -5,11 +5,11 @@ import (
 	"database/sql"
 	"encoding/json"
 	"encoding/xml"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"rssblogaggregator/internal/database"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +56,8 @@ func main() {
 	serveMux.HandleFunc("POST /v1/feed_follows", apiCfg.middlewareAuth(apiCfg.createFeedFollow))
 	serveMux.HandleFunc("DELETE /v1/feed_follows/{feedFollowId}", apiCfg.deleteFeedFollow)
 	serveMux.HandleFunc("GET /v1/feed_follows", apiCfg.middlewareAuth(apiCfg.getFeedsFollowForUser))
+
+	serveMux.HandleFunc("GET /v1/posts", apiCfg.middlewareAuth(apiCfg.getPostsByUser))
 	log.Println("Starting server on :8080")
 	server.ListenAndServe()
 }
@@ -132,6 +134,27 @@ func (a apiConfig) getFeeds(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ResponseWithJson(w, http.StatusOK, feeds)
+}
+
+func (a apiConfig) getPostsByUser(w http.ResponseWriter, r *http.Request, u database.User) {
+	var limit int
+	limitQueryParam := r.URL.Query().Get("limit")
+	limitInt, err := strconv.Atoi(limitQueryParam)
+	if err != nil {
+		limit = 10
+	} else {
+		limit = limitInt
+	}
+
+	posts, err := a.DB.GetPostsByUser(r.Context(), database.GetPostsByUserParams{
+		UserID: u.ID,
+		Limit:  int32(limit),
+	})
+	if err != nil {
+		ResponseWithError(w, http.StatusInternalServerError, "something went wrong in the database")
+		return
+	}
+	ResponseWithJson(w, http.StatusOK, posts)
 }
 
 func (a apiConfig) createUsers(w http.ResponseWriter, r *http.Request) {
@@ -246,17 +269,14 @@ func (a *apiConfig) middlewareAuth(handler authedHandler) http.HandlerFunc {
 	})
 }
 
-func ScrapeDataFromLiveFeedByUrl(url string) Rss {
+func ScrapeDataFromLiveFeedByUrl(url string) (Rss, error) {
 	res, err := http.Get(url)
 	if err != nil {
-		return Rss{}
+		return Rss{}, err
 	}
 	rss := Rss{}
 	xml.NewDecoder(res.Body).Decode(&rss)
-	for _, value := range rss.Channel.Item {
-		fmt.Println(value.Title)
-	}
-	return rss
+	return rss, nil
 }
 
 func (a apiConfig) WorkerToProcessFeeds(ctx context.Context, interval time.Duration, n int32) {
@@ -286,6 +306,41 @@ func (a apiConfig) WorkerToProcessFeeds(ctx context.Context, interval time.Durat
 }
 
 func (a apiConfig) processFeed(ctx context.Context, feed database.Feed) {
-	a.DB.MarkFeedFetched(ctx, feed.ID)
-	log.Printf(feed.Name)
+	_, err := a.DB.MarkFeedFetched(ctx, feed.ID)
+	if err != nil {
+		log.Printf("Couldn't mark feed %s fetched: %v", feed.Name, err)
+		return
+	}
+	feedData, err := ScrapeDataFromLiveFeedByUrl(feed.Url)
+	if err != nil {
+		log.Printf("Couldn't collect feed %s: %v", feed.Name, err)
+		return
+	}
+	for _, item := range feedData.Channel.Item {
+		publishedAt := sql.NullTime{}
+		if t, err := time.Parse(time.RFC1123Z, item.PubDate); err == nil {
+			publishedAt = sql.NullTime{
+				Time:  t,
+				Valid: true,
+			}
+		}
+		_, err = a.DB.CreatePost(context.Background(), database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+			FeedID:      feed.ID,
+			Title:       item.Title,
+			Description: item.Description,
+			Url:         item.Link,
+			PublishedAt: publishedAt,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "duplicate key value violates unique constraint") {
+				continue
+			}
+			log.Printf("Couldn't create post: %v", err)
+			continue
+		}
+	}
+	log.Printf("Feed %s collected, %v posts found", feed.Name, len(feedData.Channel.Item))
 }
